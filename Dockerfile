@@ -43,7 +43,7 @@ RUN curl -fSL --retry 3 https://registry.npmjs.org/expo-template-bare-minimum/-/
     && rm -rf /tmp/expo-template/package/ios \
     && tar -czf expo-template.tgz -C /tmp/expo-template package \
     && rm -rf /tmp/expo-template
-COPY package.json package-lock.json toolchain.json ./
+COPY package.json package-lock.json toolchain.json LICENSE ./
 COPY src/ ./src/
 COPY scripts/release.gradle ./scripts/release.gradle
 RUN groupadd --gid 10001 builder && useradd --uid 10001 --gid 10001 --create-home builder \
@@ -54,6 +54,7 @@ ARG VERSION=0.1.0
 ARG SOURCE=https://github.com/Alef-Enterprises-Limited/buildapk
 ARG REVISION=local
 LABEL org.opencontainers.image.title="BuildAPK" \
+      org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version=$VERSION \
       org.opencontainers.image.source=$SOURCE \
       org.opencontainers.image.revision=$REVISION

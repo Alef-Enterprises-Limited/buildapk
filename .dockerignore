@@ -1,5 +1,6 @@
 **
 !Dockerfile
+!LICENSE
 !package.json
 !package-lock.json
 !toolchain.json

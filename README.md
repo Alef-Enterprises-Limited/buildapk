@@ -2,9 +2,9 @@
 
 BuildAPK compiles one npm-based Expo/React Native Android app per container invocation. It preserves the mounted source, builds a release variant, signs and verifies the APK with your external keystore, and writes an APK, logs, and a JSON result. The container then exits.
 
-GitHub Actions **builds and distributes the builder image**. Your VPS **runs that image to compile apps**. No Expo account, EAS Build, Android Studio, emulator, or host Android SDK is required.
+Run BuildAPK locally with Docker. Java, Gradle, the Android SDK/NDK, and the build tools run inside the container instead of being installed on your host. No Expo account, EAS Build, Android Studio, emulator, or host Android SDK is required.
 
-This is the engine phase. A required second phase will add a persistent API service **inside the same container**, with uploads, authentication, progress, and downloads at `https://buildapk.adsvps.tech`. None of those Internet-facing features is implemented yet. The exported `build(options)` function in `src/build.mjs` is independent of HTTP so the future service can invoke it directly.
+Local builds are the main workflow. GitHub Actions packages the engine for optional distribution through GHCR; you can also build the image yourself. A VPS, domain, or HTTP API is not required. Remote hosting and an API remain possible future extensions, not requirements for using this tool.
 
 ## Supported baseline and status
 
@@ -33,11 +33,20 @@ Pins are recorded in `toolchain.json`. SDK/NDK/CMake are installed in the image;
 
 ## Quick start
 
-Install Docker with Linux-container support. Windows users can use Docker Desktop with WSL 2. Host Node 22+ is needed only for repository tests and the smoke-test driver. From this repository, these commands work in PowerShell and POSIX shells:
+Install Docker with Linux-container support. Windows users can use Docker Desktop with WSL 2. From this repository, build the image and check its toolchain (the commands work in PowerShell and POSIX shells):
 
 ```sh
 docker build --platform linux/amd64 -t buildapk:local .
 docker run --rm buildapk:local doctor
+```
+
+Then follow [Your application and signing setup](#your-application-and-signing-setup) to build your app. Host Node.js is not required for normal Docker builds.
+
+### Optional contributor checks and sample builds
+
+With Node.js 22.13+ installed on the host, run:
+
+```sh
 npm ci --ignore-scripts
 npm test
 npm run smoke
@@ -45,9 +54,15 @@ npm run smoke
 
 The smoke driver generates a temporary test key **outside the image build context**, builds the read-only fixture through Expo and native paths, checks signatures, hashes, JS bundle inclusion, source preservation, mount permissions, and missing-signing failure metadata. It removes its keys and temporary native volume, retaining `output/smoke-<id>/` and the `buildapk-smoke-cache` volume. These disposable keys are never appropriate for real app releases. Set `BUILDAPK_TEST_IMAGE` to test another image.
 
-Building the image accepts the [Android SDK license terms](https://developer.android.com/studio#downloads) through `sdkmanager --licenses`. Review those terms before building or distributing the tools. The repository owner has not selected a project license.
+Building the image accepts the [Android SDK license terms](https://developer.android.com/studio#downloads) through `sdkmanager --licenses`. Those tools retain their own terms; see [License](#license) for BuildAPK's license.
 
-Toolchains, Docker layers, Gradle caches, and native intermediates require substantial disk and memory. Measure in your environment; the defaults below do not establish a safe allocation for your VPS or its co-hosted services. Docker CPU/memory limits are separate from Java heap settings. Leave memory for Node, Kotlin, native compilers, and the OS.
+### Local storage and resources
+
+The image holds the engine and toolchain. Each build runs in a disposable container; Compose keeps npm and Gradle downloads in a named cache volume. Your source and signing files stay in host folders, and APKs, logs, and results are written to `output/` by default. The `--rm` option removes the finished container while retaining the cache and outputs.
+
+Docker Desktop manages image and named-volume storage. On Windows with WSL 2, you can relocate it through **Settings > Resources > Advanced > Disk image location**, for example to a larger D: drive. This does not move your repository or bind-mounted source, output, and signing folders. No project configuration changes are needed when only Docker's internal storage location changes.
+
+Toolchains, Docker layers, Gradle caches, and native intermediates require substantial disk and memory. Run one build at a time and leave memory for your other applications, Node, Kotlin, native compilers, and the OS. Docker CPU/memory limits are separate from Java heap settings. The measurements below describe the tested fixture, not universal requirements for every app.
 
 ## Your application and signing setup
 
@@ -139,7 +154,7 @@ All four path flags also apply to `doctor --mounts`. Paths must exist and be sep
 
 The working copy excludes Git history, node_modules, old APK/AAB files, native build outputs/caches, local.properties, `.env*`, `.npmrc`, standard private-key files, and `secrets/`. App sources, assets, lockfile, and native source are preserved. Dependencies install with `npm ci --include=dev`; Expo runs from the app's installed CLI with the pinned template and `--no-install`. Changed dependency requirements or lockfiles fail with reconciliation instructions. There is no silent npm-install or fetched-CLI fallback.
 
-Provide build-time configuration explicitly via runtime environment variables. `EXPO_PUBLIC_*` values can be embedded in APKs and must not contain private credentials. npm scripts, Expo plugins, and Gradle execute application code: this phase supports trusted projects, not a hostile multi-tenant sandbox. They share the container's mounts. Builder configuration is removed from child environments; signing passwords are redacted from logs. Do not print unrelated app secrets.
+Provide build-time configuration explicitly via runtime environment variables. `EXPO_PUBLIC_*` values can be embedded in APKs and must not contain private credentials. npm scripts, Expo plugins, and Gradle execute application code: BuildAPK supports trusted projects, not a hostile multi-tenant sandbox. They share the container's mounts. Builder configuration is removed from child environments; signing passwords are redacted from logs. Do not print unrelated app secrets.
 
 An init script disables release signing in the disposable Gradle build and rejects unsupported variants/toolchain settings. The engine builds `:app:assembleRelease` with the project's wrapper, aligns for 16 KB native-library pages, signs with password-file inputs, verifies the certificate against the requested keystore, checks alignment and non-debuggable status, and confirms `assets/index.android.bundle` exists. Only then is the APK published. Package ID, version code, and ABI selection remain app-controlled.
 
@@ -190,7 +205,7 @@ Statuses: running, succeeded, failed, cancelled. Stages: validate, copy, depende
 
 Logs stream to disk and terminal. Small diagnostic responses have a 1 MiB capture cap. Old job outputs are never automatically deleted. Remove selected old job folders manually. `docker compose down --volumes` clears that Compose project's cache; `docker volume rm buildapk-smoke-cache` clears the unused smoke cache. Keep signing backups separate from cleanup.
 
-## GHCR publishing and VPS use
+## Optional image publishing and pulling
 
 The workflow runs lightweight checks on pushes/PRs. PRs, default-branch pushes, release tags, and manual dispatch build the image and run real fixture smoke tests. Publication requires those checks to pass:
 
@@ -200,7 +215,7 @@ The workflow runs lightweight checks on pushes/PRs. PRs, default-branch pushes, 
 
 The lowercase image identity is derived from the repository; here it is `ghcr.io/alef-enterprises-limited/buildapk`. The workflow uses scoped GITHUB_TOKEN permissions, pinned action SHAs, and build-layer caching. It contains no production keys, VPS credentials, or SSH deployment. Fixture apps and smoke keys stay outside publishable image layers.
 
-After the first authorized publication, set the **GHCR package visibility to Public** in its package settings. A public repository alone does not make its package public. Public images normally allow anonymous VPS pulls. This local task does not publish anything.
+After the first publication, set the **GHCR package visibility to Public** in its package settings. A public repository alone does not make its package public. Public images allow users to pull without registry credentials. Publishing is optional for local builds.
 
 After a 0.1.0 release exists:
 
@@ -208,7 +223,7 @@ After a 0.1.0 release exists:
 docker pull ghcr.io/alef-enterprises-limited/buildapk:0.1.0
 ```
 
-Set `BUILDAPK_IMAGE=ghcr.io/alef-enterprises-limited/buildapk:0.1.0` in the VPS `.env`, configure paths/permissions, then use the same Compose doctor/build commands. Prefer version tags or `ghcr.io/alef-enterprises-limited/buildapk@sha256:<published-digest>` over moving `edge` for manual deployment.
+Set `BUILDAPK_IMAGE=ghcr.io/alef-enterprises-limited/buildapk:0.1.0` in your local `.env`, configure paths/permissions, then use the same Compose doctor/build commands. Do not add `--build` when using a published image. Prefer version tags or `ghcr.io/alef-enterprises-limited/buildapk@sha256:<published-digest>` over moving `edge` for repeatable image selection. Keep `BUILDAPK_IMAGE=buildapk:local` to use your locally built image.
 
 ## Troubleshooting and physical-device acceptance
 
@@ -225,7 +240,9 @@ Set `BUILDAPK_IMAGE=ghcr.io/alef-enterprises-limited/buildapk:0.1.0` in the VPS 
 | Missing/multiple APKs | Use standard :app release without flavors/splits; stale outputs are excluded. |
 | C/C++ hard-link warning | Cache and work can be on different filesystems; Gradle copies the library instead. This is not a failed build. |
 
-Final functional acceptance needs a physical **arm64 Android 7+** device. Install host Android platform-tools, enable USB debugging, approve the host, and substitute the actual APK path:
+Final functional acceptance needs a physical **arm64 Android 7+** device. You can copy `output/<build-id>/app-release.apk` to your phone and install it using the phone's file manager, allowing installation from that source when prompted. This requires no Android tools on your computer.
+
+Alternatively, if you already use host Android platform-tools, enable USB debugging, approve the host, and substitute the actual APK path:
 
 ```sh
 adb devices
@@ -235,7 +252,7 @@ adb shell am force-stop tech.adsvps.buildapk.smoke
 adb shell monkey -p tech.adsvps.buildapk.smoke -c android.intent.category.LAUNCHER 1
 ```
 
-Stop Metro and disconnect the phone from the development computer. The app must display **BuildAPK works**. An old smoke app may need uninstalling because each smoke run uses a new signing key; uninstalling removes its data. Signature and bundled-JS checks are not equivalent to a successful device launch.
+Stop Metro (the development server started by commands such as `npx expo start`) with Ctrl+C if it is running, and disconnect the phone from the development computer. The app must display **BuildAPK works** without a development server. An old smoke app may need uninstalling because each smoke run uses a new signing key; uninstalling removes its data. Signature and bundled-JS checks are not equivalent to a successful device launch.
 
 ## Verification record
 
@@ -244,8 +261,14 @@ Stop Metro and disconnect the phone from the development computer. The app must 
 - Fixture installation and native prebuild succeeded without dependency changes. Inspected native configuration confirms the SDK/NDK/Gradle/AGP pins and arm64 ABI above.
 - Android command-line tools and platform-tools download SHA-256 values were independently checked against the Dockerfile pins.
 - The final image built successfully and doctor passed, including mounted source/output/cache/signing permissions under UID 10001. Both Expo generation and existing-native builds produced signed, non-debuggable arm64 APKs with verified certificates, alignment, hashes, and bundled JavaScript. Source/lockfile preservation, native-source preservation, secret-safe logs, and missing-signing failure metadata passed the automated smoke driver. Earlier real compilation failure also produced nonzero exit and failure metadata without publishing an APK.
-- Each final APK was 20,366,216 bytes. Final warm-cache job durations were 81.7 seconds (Expo) and 79.8 seconds (native). An earlier successful build took 653 seconds after an initial failed run had already populated some caches; this is not a clean cold-build benchmark. Sampled container memory reached about 3.1 GiB during testing, not a continuously measured peak or recommended VPS allocation.
+- Each final APK was 20,366,216 bytes. Final warm-cache job durations were 81.7 seconds (Expo) and 79.8 seconds (native). An earlier successful build took 653 seconds after an initial failed run had already populated some caches; this is not a clean cold-build benchmark. Sampled container memory reached about 3.1 GiB during testing, not a continuously measured peak or a recommended memory limit.
 - Docker reported final image size `.Size = 1,317,171,815` bytes (about 1.32 GB); this is not total required disk space. Unpacked SDK files, Docker build layers, caches, and temporary compilation files consume additional space. Each smoke run writes exact results and the tested image ID to `output/smoke-<id>/verification.json`.
-- Physical-device launch, GHCR publication, and VPS execution have not been performed.
+- Physical-device launch and GHCR publication have not been verified in this record.
+
+## License
+
+BuildAPK's original source code is free and open source under the [MIT License](LICENSE), copyright 2026 Alef Enterprises Limited. You may use, modify, and redistribute it, including commercially, subject to retaining the license notice. It is provided without warranty. See the [OSI MIT license reference](https://opensource.org/license/mit).
+
+Bundled third-party tools and dependencies, including the Android SDK, retain their respective licenses and terms. BuildAPK's license does not change the license of applications you build. The package's `private` flag prevents accidental npm publication; it does not restrict the MIT license or public Docker image distribution.
 
 Primary references: [Expo SDK 54](https://docs.expo.dev/versions/v54.0.0/), [native generation](https://docs.expo.dev/workflow/continuous-native-generation/), [React Native setup](https://reactnative.dev/docs/0.81/set-up-your-environment), [Node releases](https://nodejs.org/en/about/previous-releases), [apksigner](https://developer.android.com/tools/apksigner), [zipalign](https://developer.android.com/tools/zipalign), [Docker test-before-push](https://docs.docker.com/build/ci/github-actions/test-before-push/), [GitHub publishing](https://docs.github.com/en/actions/tutorials/publish-packages/publish-docker-images).
