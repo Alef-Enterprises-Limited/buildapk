@@ -1,0 +1,17 @@
+* text=auto
+*.mjs text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+*.gradle text eol=lf
+gradlew text eol=lf
+*.bat text eol=crlf
+Dockerfile text eol=lf
+*.md text eol=lf
+.gitignore text eol=lf
+.dockerignore text eol=lf
+.env.example text eol=lf
+*.jar binary
+*.png binary

@@ -1,0 +1,9 @@
+{
+  "expo": {
+    "name": "BuildAPK Smoke",
+    "slug": "buildapk-smoke",
+    "version": "1.0.0",
+    "android": { "package": "tech.adsvps.buildapk.smoke", "versionCode": 1 },
+    "plugins": [["expo-build-properties", { "android": { "buildArchs": ["arm64-v8a"] } }]]
+  }
+}

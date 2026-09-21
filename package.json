@@ -1,0 +1,11 @@
+{
+  "name": "buildapk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.13.0" },
+  "scripts": {
+    "test": "node --test",
+    "smoke": "node scripts/smoke.mjs"
+  }
+}

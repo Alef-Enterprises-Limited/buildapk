@@ -1,0 +1,23 @@
+// Applied only to the disposable working copy. Signing happens after assembly.
+gradle.beforeProject { project ->
+    project.pluginManager.withPlugin('com.android.application') {
+        if (project.path != ':app') throw new GradleException('BuildAPK supports only the standard :app application module.')
+        project.extensions.getByName('androidComponents').finalizeDsl { android ->
+            if (!android.productFlavors.isEmpty()) throw new GradleException('BuildAPK does not support product flavors.')
+            if (android.splits.abi.enable || android.splits.density.enable) throw new GradleException('BuildAPK does not support split APKs.')
+            if (android.compileSdk != 36 || android.buildToolsVersion != '36.0.0' || android.ndkVersion != '27.1.12297006') {
+                throw new GradleException('BuildAPK requires compileSdk 36, build-tools 36.0.0 and NDK 27.1.12297006. Use the documented baseline.')
+            }
+            def release = android.buildTypes.findByName('release')
+            if (release == null || release.debuggable) throw new GradleException('A non-debuggable release build type is required.')
+            release.signingConfig = null
+        }
+        project.afterEvaluate {
+            def react = project.extensions.findByName('react')
+            if (react != null && react.debuggableVariants.get().contains('release')) {
+                throw new GradleException('release must bundle JavaScript; remove it from react.debuggableVariants.')
+            }
+            if (react != null) react.extraPackagerArgs.addAll(['--max-workers', gradle.startParameter.maxWorkerCount.toString()])
+        }
+    }
+}

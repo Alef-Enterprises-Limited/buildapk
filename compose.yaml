@@ -1,0 +1,37 @@
+services:
+  builder:
+    image: ${BUILDAPK_IMAGE:-buildapk:local}
+    platform: linux/amd64
+    build:
+      context: .
+    environment:
+      BUILDAPK_KEYSTORE_PATH: /secrets/release.jks
+      BUILDAPK_KEY_ALIAS: ${BUILDAPK_KEY_ALIAS:-release}
+      BUILDAPK_STORE_PASSWORD_FILE: /secrets/store-password
+      BUILDAPK_KEY_PASSWORD_FILE: /secrets/key-password
+      BUILDAPK_TIMEOUT_SECONDS: ${BUILDAPK_TIMEOUT_SECONDS:-3600}
+      BUILDAPK_GRADLE_WORKERS: ${BUILDAPK_GRADLE_WORKERS:-2}
+      BUILDAPK_GRADLE_HEAP_MB: ${BUILDAPK_GRADLE_HEAP_MB:-2048}
+    volumes:
+      - type: bind
+        source: ${BUILDAPK_SOURCE:-./fixtures/expo-minimal}
+        target: /input
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${BUILDAPK_OUTPUT:-./output}
+        target: /output
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${BUILDAPK_SECRETS:-./secrets}
+        target: /secrets
+        read_only: true
+        bind:
+          create_host_path: false
+      - npm-gradle-cache:/cache
+    stop_grace_period: 15s
+    command: ["build"]
+volumes:
+  npm-gradle-cache:
