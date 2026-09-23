@@ -4,9 +4,11 @@
   "license": "MIT",
   "private": true,
   "type": "module",
+  "bin": { "buildapk": "src/host-cli.mjs" },
   "engines": { "node": ">=22.13.0" },
   "scripts": {
     "test": "node --test",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "smoke:launcher": "node scripts/launcher-smoke.mjs"
   }
 }

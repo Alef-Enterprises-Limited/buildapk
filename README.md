@@ -33,14 +33,32 @@ Pins are recorded in `toolchain.json`. SDK/NDK/CMake are installed in the image;
 
 ## Quick start
 
-Install Docker with Linux-container support. Windows users can use Docker Desktop with WSL 2. From this repository, build the image and check its toolchain (the commands work in PowerShell and POSIX shells):
+Install Node.js 22.13+ and Docker with Linux-container support. Windows users can use Docker Desktop with WSL 2. Install the launcher once, from this repository:
 
 ```sh
-docker build --platform linux/amd64 -t buildapk:local .
-docker run --rm buildapk:local doctor
+npm link
 ```
 
-Then follow [Your application and signing setup](#your-application-and-signing-setup) to build your app. Host Node.js is not required for normal Docker builds.
+Then open a terminal in your React Native/Expo app folder and run:
+
+```sh
+buildapk
+```
+
+The launcher checks compatibility, uses the local engine image (building it automatically if missing), handles mounts and caches, and prints the full APK path. On the first build it asks whether to create a persistent signing key for a **new app**, import an existing key, or reuse a saved identity. Later builds reuse the saved setup without prompts. For an app you already distribute, select its existing signing key so updates keep the correct identity. The project source and lockfile are left unchanged.
+
+No `.env`, Compose commands, Android tools, or per-build path configuration are needed. Keep this repository at its installed location because `npm link` points to it; run `npm link` again if you move it. If your shell does not find `buildapk`, open a new terminal and ensure npm's global executable directory is on PATH. PowerShell users whose script execution policy blocks npm shims can use `buildapk.cmd`.
+
+| Host command | Purpose |
+| --- | --- |
+| `buildapk` / `buildapk build` | Build the current project. |
+| `buildapk setup` | Create/import signing settings or select a saved identity after moving a project. |
+| `buildapk doctor` | Check Docker, the engine, and saved signing credentials when present. |
+| `buildapk --help` / `buildapk --version` | Show usage/version. |
+
+Run setup interactively once before unattended builds. Missing saved keys cause an error; they are never silently regenerated. Back up the entire signing-identity folder shown during setup, including both password files. Passwords are hidden during entry, stored in protected local files, and not passed in process arguments. Changing identities is explicit and retains the old key. Builds using the same storage home are serialized; Ctrl+C stops the build container and allows the engine to finish its failure metadata before cleanup.
+
+The launcher passes explicitly set `EXPO_PUBLIC_*` variables and the three documented timeout/Gradle limits from your terminal environment. It does not load app `.env` files or forward your entire environment. Use the advanced Docker workflow for other explicit app variables. Only trusted app code should be built, because build scripts can access the container's mounts.
 
 ### Optional contributor checks and sample builds
 
@@ -50,21 +68,43 @@ With Node.js 22.13+ installed on the host, run:
 npm ci --ignore-scripts
 npm test
 npm run smoke
+npm run smoke:launcher
 ```
 
 The smoke driver generates a temporary test key **outside the image build context**, builds the read-only fixture through Expo and native paths, checks signatures, hashes, JS bundle inclusion, source preservation, mount permissions, and missing-signing failure metadata. It removes its keys and temporary native volume, retaining `output/smoke-<id>/` and the `buildapk-smoke-cache` volume. These disposable keys are never appropriate for real app releases. Set `BUILDAPK_TEST_IMAGE` to test another image.
+
+Build the engine image first with `docker build --platform linux/amd64 -t buildapk:local .` for the original `smoke` command. `smoke:launcher` exercises first-time key creation, an unattended repeat build, existing-key import for native input, and real cancellation through the host launcher. Its disposable profiles/keys are removed afterward; APKs, logs, and a report remain in `output/launcher-smoke-<id>/`.
 
 Building the image accepts the [Android SDK license terms](https://developer.android.com/studio#downloads) through `sdkmanager --licenses`. Those tools retain their own terms; see [License](#license) for BuildAPK's license.
 
 ### Local storage and resources
 
-The image holds the engine and toolchain. Each build runs in a disposable container; Compose keeps npm and Gradle downloads in a named cache volume. Your source and signing files stay in host folders, and APKs, logs, and results are written to `output/` by default. The `--rm` option removes the finished container while retaining the cache and outputs.
+The image holds the engine and toolchain. Each build runs in a disposable container; npm and Gradle downloads stay in a Docker named volume (`buildapk-launcher-cache-desktop` on Windows, or `buildapk-launcher-cache-<uid>` on Linux). Compilation uses a separate temporary Docker volume for fast filesystem access, removed after the invocation. The launcher removes finished containers while retaining caches and outputs. On Linux it runs the build as your UID/GID so host files remain accessible to you; the cache and work volume are initialized with matching ownership.
+
+The launcher stores its data outside app repositories in `%LOCALAPPDATA%\BuildAPK` on Windows or `~/.local/share/buildapk` on Linux:
+
+```text
+profiles.json                   # Maps project paths to saved signing identities
+identities/<id>/                # Keystore, password files, and identity metadata
+builds/<project-id>/<run-id>/    # Engine job folders containing APK/log/result
+```
+
+On Windows, the storage root grants access to the current account and SYSTEM; Linux uses owner-only directory/file permissions. The default storage folder must be dedicated to BuildAPK. To keep these files on another drive, set `BUILDAPK_HOME` once in your user environment, for example `D:\BuildAPK`. It must be outside your app source. Changing the variable does not migrate existing keys: copy the existing storage folder while no launcher is running, then change the setting. Use `buildapk setup` to associate a moved project with its saved identity. A project path change never automatically creates a replacement key.
 
 Docker Desktop manages image and named-volume storage. On Windows with WSL 2, you can relocate it through **Settings > Resources > Advanced > Disk image location**, for example to a larger D: drive. This does not move your repository or bind-mounted source, output, and signing folders. No project configuration changes are needed when only Docker's internal storage location changes.
 
 Toolchains, Docker layers, Gradle caches, and native intermediates require substantial disk and memory. Run one build at a time and leave memory for your other applications, Node, Kotlin, native compilers, and the OS. Docker CPU/memory limits are separate from Java heap settings. The measurements below describe the tested fixture, not universal requirements for every app.
 
-## Your application and signing setup
+## Advanced: direct Docker and Compose
+
+The host launcher is the recommended workflow. Direct Docker/Compose remains available without host Node.js. From this repository, first build/check the image:
+
+```sh
+docker build --platform linux/amd64 -t buildapk:local .
+docker run --rm buildapk:local doctor
+```
+
+### Your application and signing setup
 
 Create `output/` and `secrets/`, copy `.env.example` to `.env`, and set `BUILDAPK_SOURCE` to your app directory. Supply `secrets/release.jks`, `secrets/store-password`, and `secrets/key-password`; each password file contains one nonempty line. Set the correct key alias in `.env`. Keep secure backups of your release key and passwords.
 
@@ -131,7 +171,9 @@ docker run --rm --platform linux/amd64 `
 
 Replace the fixture mount with your app. Quoted arguments support spaces. If a raw Docker named cache needs initialization: `docker run --rm --user 0 --mount type=volume,source=buildapk-cache,target=/cache --entrypoint chown buildapk:local 10001:10001 /cache`.
 
-## CLI and build contract
+## Container CLI and build contract
+
+These flags belong to the CLI **inside the image**, for example `docker run --rm buildapk:local doctor`. The host `buildapk` launcher has the simpler interface documented above.
 
 ```text
 buildapk --help
@@ -205,6 +247,8 @@ Statuses: running, succeeded, failed, cancelled. Stages: validate, copy, depende
 
 Logs stream to disk and terminal. Small diagnostic responses have a 1 MiB capture cap. Old job outputs are never automatically deleted. Remove selected old job folders manually. `docker compose down --volumes` clears that Compose project's cache; `docker volume rm buildapk-smoke-cache` clears the unused smoke cache. Keep signing backups separate from cleanup.
 
+For launcher builds, old APKs/logs are under the storage home's `builds/` directory. Delete only selected old run folders; retain `identities/` and `profiles.json`. With no build running, Windows users can clear the launcher's dependency cache with `docker volume rm buildapk-launcher-cache-desktop` (Linux: substitute your UID for `desktop`). The next build downloads dependencies again. After a launcher crash, its next invocation stops containers and removes temporary work volumes labelled for that same storage home before building; it preserves keys and output records.
+
 ## Optional image publishing and pulling
 
 The workflow runs lightweight checks on pushes/PRs. PRs, default-branch pushes, release tags, and manual dispatch build the image and run real fixture smoke tests. Publication requires those checks to pass:
@@ -223,7 +267,7 @@ After a 0.1.0 release exists:
 docker pull ghcr.io/alef-enterprises-limited/buildapk:0.1.0
 ```
 
-Set `BUILDAPK_IMAGE=ghcr.io/alef-enterprises-limited/buildapk:0.1.0` in your local `.env`, configure paths/permissions, then use the same Compose doctor/build commands. Do not add `--build` when using a published image. Prefer version tags or `ghcr.io/alef-enterprises-limited/buildapk@sha256:<published-digest>` over moving `edge` for repeatable image selection. Keep `BUILDAPK_IMAGE=buildapk:local` to use your locally built image.
+For the advanced Compose workflow, set `BUILDAPK_IMAGE=ghcr.io/alef-enterprises-limited/buildapk:0.1.0` in your local `.env`, configure paths/permissions, then use the same Compose doctor/build commands. Do not add `--build` when using a published image. Prefer version tags or `ghcr.io/alef-enterprises-limited/buildapk@sha256:<published-digest>` over moving `edge` for repeatable image selection. Keep `BUILDAPK_IMAGE=buildapk:local` to use your locally built image. The host launcher currently uses `buildapk:local`; it does not require a published image.
 
 ## Troubleshooting and physical-device acceptance
 
@@ -263,7 +307,11 @@ Stop Metro (the development server started by commands such as `npx expo start`)
 - The final image built successfully and doctor passed, including mounted source/output/cache/signing permissions under UID 10001. Both Expo generation and existing-native builds produced signed, non-debuggable arm64 APKs with verified certificates, alignment, hashes, and bundled JavaScript. Source/lockfile preservation, native-source preservation, secret-safe logs, and missing-signing failure metadata passed the automated smoke driver. Earlier real compilation failure also produced nonzero exit and failure metadata without publishing an APK.
 - Each final APK was 20,366,216 bytes. Final warm-cache job durations were 81.7 seconds (Expo) and 79.8 seconds (native). An earlier successful build took 653 seconds after an initial failed run had already populated some caches; this is not a clean cold-build benchmark. Sampled container memory reached about 3.1 GiB during testing, not a continuously measured peak or a recommended memory limit.
 - Docker reported final image size `.Size = 1,317,171,815` bytes (about 1.32 GB); this is not total required disk space. Unpacked SDK files, Docker build layers, caches, and temporary compilation files consume additional space. Each smoke run writes exact results and the tested image ID to `output/smoke-<id>/verification.json`.
-- Physical-device launch and GHCR publication have not been verified in this record.
+- On 2026-09-23, the owner confirmed that the supplied sample APK installed successfully and worked on their physical Android phone.
+- Launcher verification on 2026-09-23: all 29 tests passed on Linux; 28 passed on Windows with the Linux-only process test skipped. Installed with `npm link`; the installed `buildapk doctor` passed. Hidden password entry was checked in a real Windows terminal.
+- The launcher produced verified APKs for first-time Expo setup, an unattended repeat using the same identity, and native input using an imported key. All three certificate fingerprints matched, APK hashes were checked, and source/lockfile/native configuration preservation passed. A real cancellation during dependency installation produced cancelled metadata with no APK. Containers, temporary work volumes, and disposable smoke keys were removed.
+- Launcher job durations were 1,017.9 seconds for the first successful run with a fresh Gradle cache, 105.1 seconds for the repeat, and 101.5 seconds for native input. An earlier interrupted attempt had already populated the npm cache, so the first timing is not a completely cold-build benchmark. The report and APKs are retained locally under `output/launcher-smoke-ff240fc7-a669-41d1-8c92-011f57782e91/`; `npm run smoke:launcher` produces a new report on subsequent runs.
+- GHCR publication has not been verified in this record.
 
 ## License
 
